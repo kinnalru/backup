@@ -1,0 +1,62 @@
+#!/usr/bin/ruby
+
+require 'optparse'
+require 'ostruct'
+require 'time'
+require 'fileutils'
+
+opts = OpenStruct.new
+parser = nil
+
+rest = OptionParser.new do |o|
+  parser = o
+
+  o.banner = "Usage: #{File.basename($0)} [options] [command]"
+  o.on('-s', '--src PATH', "What to backup") { |v| opts.src = v }
+  o.on('-d', '--dst PATH', "Where to backup") { |v| opts.dst = v }
+  o.on('-c', '--config FILENAME', 'Config file') {|v| opts.config = v}
+  o.on('-h') { puts parser; exit }
+
+  o.separator ""
+  o.separator "Commands:"
+  o.separator "    du       Show destination space usage"
+  o.separator "    diff     Show diff between source and distination"
+end.parse!
+
+if opts.config
+  $config = OpenStruct.new
+  require_relative opts.config
+  opts = OpenStruct.new($config.to_h.merge(opts.to_h))
+end
+
+opts.cmd = rest.first
+
+if opts.dst.nil? || opts.dst.empty?
+  puts parser
+  raise "You must specify destination path"
+end
+
+if opts.cmd == "du"
+  system("du #{opts.dst}")
+  exit $?.exitstatus
+end
+
+if opts.cmd == "diff"
+  system("mkdir -p #{opts.dst}/latest/")
+  system("rsync --archive --dry-run --verbose --one-file-system #{opts.src} --delete #{opts.dst}/latest/")
+  exit $?.exitstatus
+end
+
+if opts.src.nil? || opts.src.empty?
+  puts parser
+  raise "You must specify source path"
+end
+
+cmd = "rsync --archive --one-file-system -h --stats --info=progress2 #{opts.src} --delete #{opts.dst}/latest/"
+system cmd
+
+date = Time.now.strftime("%Y.%m.%d-%H%M%L")
+cmd = "cp --archive --link #{opts.dst}/latest/ #{opts.dst}/#{date}"
+system cmd
+
+exit 0
