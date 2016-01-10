@@ -29,7 +29,11 @@ if opts.config
   opts = OpenStruct.new($config.to_h.merge(opts.to_h))
 end
 
-opts.cmd = rest.first
+if cmd = rest.first
+  opts.cmd = cmd
+end
+
+puts opts
 
 if opts.dst.nil? || opts.dst.empty?
   puts parser
@@ -37,14 +41,13 @@ if opts.dst.nil? || opts.dst.empty?
 end
 
 if opts.cmd == "du"
-  system("du #{opts.dst}")
+  system("du -h -c -d 1 #{opts.dst}")
   exit $?.exitstatus
-end
-
-if opts.cmd == "diff"
-  system("mkdir -p #{opts.dst}/latest/")
+elsif opts.cmd == "diff"
   system("rsync --archive --dry-run --verbose --one-file-system #{opts.src} --delete #{opts.dst}/latest/")
   exit $?.exitstatus
+elsif opts.cmd
+  raise "there is no command #{opts.cmd}"
 end
 
 if opts.src.nil? || opts.src.empty?
@@ -52,11 +55,44 @@ if opts.src.nil? || opts.src.empty?
   raise "You must specify source path"
 end
 
-cmd = "rsync --archive --one-file-system -h --stats --info=progress2 #{opts.src} --delete #{opts.dst}/latest/"
-system cmd
+unless File.exist?("#{opts.dst}")
+	raise "there is no destination: #{opts.dst}"
+end
 
-date = Time.now.strftime("%Y.%m.%d-%H%M%L")
-cmd = "cp --archive --link #{opts.dst}/latest/ #{opts.dst}/#{date}"
-system cmd
+#lastreplica = Dir["#{opts.dst}/*"].map{ |f| File.mtime(f) }.sort.first rescue nil
+lastreplica = File.mtime("#{opts.dst}/latest/") rescue nil
+
+
+if lastreplica && opts.nomore && (Time.now - lastreplica) < opts.nomore * 36000.0
+  puts "skip by nomore option"
+  exit 0
+end
+
+def execute cmd
+  system cmd
+  return $?.exitstatus == 0
+end
+
+def execute_or_fail cmd
+  raise "Failed: #{cmd}" unless execute(cmd)
+end
+
+def sync opts
+  execute_or_fail(opts.before) if opts.before
+
+  execute_or_fail("mkdir -p #{opts.dst}/latest/")
+
+  cmd = "rsync --archive --one-file-system -h --stats --info=progress2 #{opts.src} --delete #{opts.dst}/latest/"
+  execute_or_fail(cmd)
+
+  date = Time.now.strftime("%Y.%m.%d-%H%M%L")
+  cmd = "cp --archive --link #{opts.dst}/latest/ #{opts.dst}/#{date}"
+  execute_or_fail(cmd)
+
+  execute_or_fail(opts.after) if opts.after
+end
+
+sync(opts)
 
 exit 0
+
